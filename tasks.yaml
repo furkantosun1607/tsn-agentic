@@ -1,0 +1,63 @@
+score_task:
+  description: >
+    Aşağıdaki haber makalesini dikkatle oku ve gazetecilik kalitesini değerlendir.
+
+    Makale ID: {article_id}
+    Başlık: {title}
+    İçerik: {content}
+
+    Değerlendirme Kriterleri:
+    - Bilgi yoğunluğu (boş tekrarlar var mı?)
+    - Kaynak güvenilirliği ve referanslar
+    - Clickbait unsurları (varsa puanı düşür)
+    - Yazım ve dilbilgisi kalitesi
+    - Okuyucuya gerçek değer katıp katmadığı
+
+    ZORUNLU FORMAT: Sadece 1 ile 100 arasında bir tam sayı puan ver.
+    Düşük puan = düşük kalite, Yüksek puan = yüksek kalite.
+
+    PUANI DB'ye yazmak icin:
+    - MUTLAKA `save_quality_score` aracini cagir.
+    - `article_id` ve secilen 1-100 puani gonder.
+    - Sadece puani kaydet; kategorileri ve ozet alanini simdilik degistirme.
+  expected_output: >
+    save_quality_score cagrisi yapildi; makale ID ve 1-100 arasi kalite puani.
+  agent: scoring_agent
+
+categorize_task:
+  description: >
+    Aşağıdaki haber makalesini oku ve mevcut kategori listesinden en uygun
+    olanları seç.
+
+    Makale ID: {article_id}
+    Başlık: {title}
+    İçerik: {content}
+
+    Mevcut Kategoriler: {available_categories}
+
+    KURALLAR:
+    1. KESİNLİKLE en fazla 3 kategori seç.
+    2. Sadece yukarıdaki listeden kategori seçebilirsin, yeni kategori UYDURMA.
+    3. Haberin ana teması ve alt temaları için en uygun kategorileri belirle.
+    4. Eğer haber tek bir kategoriye net olarak uyuyorsa, tek kategori de yeterlidir.
+  expected_output: >
+    Makale ID'si ve seçilen kategori adlarının listesi (en fazla 3 adet).
+  agent: categorization_agent
+
+summarize_task:
+  description: >
+    Aşağıdaki haber makalesini dikkatle oku ve kısa bir TL;DR özeti oluştur.
+
+    Makale ID: {article_id}
+    Başlık: {title}
+    İçerik: {content}
+
+    KURALLAR:
+    1. Özet 3-4 madde içermeli (bullet point formatında).
+    2. Her madde en fazla 1-2 cümle olmalı.
+    3. Haberin ana fikrini, önemli detayları ve sonucunu kapsamalı.
+    4. Gereksiz kelimeler ve tekrarlar olmamalı.
+    5. Türkçe yaz.
+  expected_output: >
+    Makale ID'si ve 3-4 maddelik kısa TL;DR özeti.
+  agent: summarization_agent
