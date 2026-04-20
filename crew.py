@@ -108,13 +108,18 @@ class TsnMediaCrew:
         )
 
     # ------------------------------------------------------------------
+<<<<<<< HEAD
     # Crew Assembly — Orijinal (main.py ile uyumlu, DEĞİŞTİRİLMEDİ)
+=======
+    # Crew Assembly
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     # ------------------------------------------------------------------
 
     @crew
     def crew(self) -> Crew:
         """Assembles the TSN Media AI Crew with sequential processing."""
         return Crew(
+<<<<<<< HEAD
             agents=[
                 self.scoring_agent(),
                 self.categorization_agent(),
@@ -204,6 +209,10 @@ class TsnMediaCrew:
         return Crew(
             agents=[self.categorization_agent(), self.summarization_agent()],
             tasks=[cat_task, sum_task],
+=======
+            agents=[self.scoring_agent()],  # Sadece puanlama calisir
+            tasks=[self.score_task()],      # Kategorize ve summary simdilik calistirilmaz
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
             process=Process.sequential,
             verbose=True,
         )

@@ -139,17 +139,34 @@ def run():
     logger.info("=" * 60)
     logger.info("TSN Media AI Worker başlatılıyor...")
     logger.info("=" * 60)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     # Fetch pending articles
     pending = fetch_pending_articles(limit=10)
     if not pending:
         logger.info("İşlenecek bekleyen haber bulunamadı. Çıkış yapılıyor.")
         return
+<<<<<<< HEAD
     logger.info("%d adet bekleyen haber bulundu.", len(pending))
     # Fetch available categories once
     available_categories = fetch_available_categories()
     logger.info("Mevcut kategoriler: %s", available_categories)
     # Initialize crew
     tsn_crew = TsnMediaCrew()
+=======
+
+    logger.info("%d adet bekleyen haber bulundu.", len(pending))
+
+    # Fetch available categories once
+    available_categories = fetch_available_categories()
+    logger.info("Mevcut kategoriler: %s", available_categories)
+
+    # Initialize crew
+    tsn_crew = TsnMediaCrew()
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     # Process each article
     for idx, article_data in enumerate(pending, start=1):
         if idx > 1:
@@ -158,12 +175,20 @@ def run():
                 _MIN_INTERVAL_SEC,
             )
             time.sleep(_MIN_INTERVAL_SEC)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
         logger.info(
             "[%d/%d] İşleniyor: ID=%d — %s",
             idx, len(pending),
             article_data["article_id"],
             article_data["title"][:80],
         )
+<<<<<<< HEAD
+=======
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
         try:
             inputs = {
                 "article_id": article_data["article_id"],
@@ -171,12 +196,20 @@ def run():
                 "content": article_data["content"],
                 "available_categories": available_categories,
             }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
             result = tsn_crew.crew().kickoff(inputs=inputs)
             logger.info(
                 "[%d/%d] TAMAMLANDI: ID=%d",
                 idx, len(pending), article_data["article_id"],
             )
             logger.debug("Crew sonucu: %s", result)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
         except Exception as e:
             logger.error(
                 "[%d/%d] HATA: ID=%d — %s",
@@ -185,9 +218,17 @@ def run():
             if _is_rate_limit_error(e):
                 _sleep_for_rate_limit(e)
             continue
+<<<<<<< HEAD
+=======
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     logger.info("=" * 60)
     logger.info("Tüm bekleyen haberler işlendi. AI Worker tamamlandı.")
     logger.info("=" * 60)
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
 if __name__ == "__main__":
     run()
