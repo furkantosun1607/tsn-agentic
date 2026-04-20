@@ -108,15 +108,111 @@ class TsnMediaCrew:
         )
 
     # ------------------------------------------------------------------
+<<<<<<< HEAD
+    # Crew Assembly — Orijinal (main.py ile uyumlu, DEĞİŞTİRİLMEDİ)
+=======
     # Crew Assembly
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     # ------------------------------------------------------------------
 
     @crew
     def crew(self) -> Crew:
         """Assembles the TSN Media AI Crew with sequential processing."""
         return Crew(
+<<<<<<< HEAD
+            agents=[
+                self.scoring_agent(),
+                self.categorization_agent(),
+                self.summarization_agent()
+            ],
+            tasks=[
+                self.score_task(),       # 1. Adım: Önce kalite kontrolü yap
+                self.categorize_task(),  # 2. Adım: Puanı aldıysa kategorisini belirle
+                self.summarize_task()    # 3. Adım: En son özeti çıkar
+            ],
+            process=Process.sequential,
+            verbose=True,
+        )
+
+    # ------------------------------------------------------------------
+    # LangGraph İçin Ayrık Crew'lar
+    # Bu metotlar YALNIZCA langgraph_flow.py tarafından kullanılır.
+    # Mevcut crew() metodu ve main.py tamamen korunur — geriye uyumluluk bozulmaz.
+    # ------------------------------------------------------------------
+
+    def scoring_crew(self) -> Crew:
+        """
+        Sadece puanlama adımını çalıştıran tek görevli crew.
+        LangGraph scoring_node tarafından çağrılır.
+        SaveQualityScoreTool DB'ye puanı yazar; LangGraph node'u
+        ardından DB'den okuyarak state'e ekler.
+        """
+        return Crew(
+            agents=[self.scoring_agent()],
+            tasks=[self.score_task()],
+            process=Process.sequential,
+            verbose=True,
+        )
+
+    def categorize_summary_crew(self, quality_score: int) -> Crew:
+        """
+        Kategorizasyon + Özetleme görevlerini ardı ardına çalıştırır.
+        LangGraph'ın categorize_and_summarize_node'u tarafından tetiklenir.
+
+        quality_score: Scoring adımında hesaplanan puan.
+            UpdateScoreAndCategoriesTool'un çalışabilmesi için task
+            açıklamasına dinamik olarak enjekte edilir.
+            Bu sayede tasks.yaml DEĞİŞTİRİLMEZ, main.py BOZULMAZ.
+        """
+        # Kategorize görevi — quality_score task açıklamasına enjekte edildi
+        cat_task = Task(
+            description=(
+                f"Asagidaki haber makalesini oku ve mevcut kategori listesinden\n"
+                f"en uygun olanlari sec.\n\n"
+                "Makale ID: {article_id}\n"
+                "Baslik: {title}\n"
+                "Icerik: {content}\n\n"
+                "Mevcut Kategoriler: {available_categories}\n\n"
+                "KURALLAR:\n"
+                "1. KESINLIKLE en fazla 3 kategori sec.\n"
+                "2. Sadece yukaridaki listeden kategori secebilirsin.\n"
+                "3. Haberin ana temasi ve alt temaları icin en uygun kategorileri belirle.\n\n"
+                f"NOT: Bu haberin kalite puani {quality_score}/100 olarak belirlendi.\n"
+                f"UpdateScoreAndCategoriesTool'u cagirirken score={quality_score} kullan."
+            ),
+            expected_output="Makale ID ve secilen kategori adlari (en fazla 3 adet).",
+            agent=self.categorization_agent(),
+            tools=[GetAvailableCategoriesTool(), UpdateScoreAndCategoriesTool()],
+            output_pydantic=CategorizationOutput,
+        )
+
+        # Ozetleme gorevi — tasks.yaml'dan birebir alindi, degistirilmedi
+        sum_task = Task(
+            description=(
+                "Asagidaki haber makalesini dikkatle oku ve kisa bir TL;DR ozeti olustur.\n\n"
+                "Makale ID: {article_id}\n"
+                "Baslik: {title}\n"
+                "Icerik: {content}\n\n"
+                "KURALLAR:\n"
+                "1. Ozet 3-4 madde icermeli (bullet point formatinda).\n"
+                "2. Her madde en fazla 1-2 cumle olmali.\n"
+                "3. Haberin ana fikrini, onemli detaylari ve sonucunu kapsamali.\n"
+                "4. Gereksiz kelimeler ve tekrarlar olmamali.\n"
+                "5. Ozeti update_summary araci ile kaydet."
+            ),
+            expected_output="Makale ID ve 3-4 maddelik kisa TL;DR ozeti.",
+            agent=self.summarization_agent(),
+            tools=[UpdateSummaryTool()],
+            output_pydantic=SummaryOutput,
+        )
+
+        return Crew(
+            agents=[self.categorization_agent(), self.summarization_agent()],
+            tasks=[cat_task, sum_task],
+=======
             agents=[self.scoring_agent()],  # Sadece puanlama calisir
             tasks=[self.score_task()],      # Kategorize ve summary simdilik calistirilmaz
+>>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
             process=Process.sequential,
             verbose=True,
         )
