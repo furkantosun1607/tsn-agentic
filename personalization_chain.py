@@ -102,10 +102,18 @@ def build_personalization_chain():
     Zincir: ChatPromptTemplate | ChatGoogleGenerativeAI (structured) 
     LangSmith, LANGCHAIN_TRACING_V2=true ise zinciri otomatik izler.
     """
+    free_tier_mode = os.environ.get("FREE_TIER_MODE", "true").lower() == "true"
+    default_personalization_model = (
+        "gemini-2.0-flash-lite" if free_tier_mode else "gemini-2.0-flash"
+    )
+
     llm = ChatGoogleGenerativeAI(
-        model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+        model=os.environ.get(
+            "GEMINI_PERSONALIZATION_MODEL",
+            os.environ.get("GEMINI_MODEL", default_personalization_model),
+        ),
         google_api_key=os.environ.get("GEMINI_API_KEY"),
-        temperature=0.3,
+        temperature=float(os.environ.get("GEMINI_TEMPERATURE", "0.2")),
     )
 
     # with_structured_output → LangChain'in modern yapılandırılmış çıktı API'si

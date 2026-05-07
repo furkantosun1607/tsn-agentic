@@ -1,6 +1,22 @@
 """
-TSN Media AI Worker — Entry point.
-Fetches pending articles and runs the CrewAI pipeline for each one.
+TSN Media AI Worker — Entry point. (GERÇEK ÜRETİM ORTAMI ÇALIŞTIRICISI)
+=======================================================================
+SUNUM NOTU (Hoca İçin Mimari Açıklama):
+Sunum sırasında ekranda izlediğiniz "demo_simulation.py" adlı görsel şölenin, 
+veritabanına bağlı ve gerçek üretim (production) ortamında çalışan arka plan hali budur.
+
+Sistem Mimarisi ve Akış (Workflow):
+-----------------------------------
+1. INGESTION (Veri Çekme): `fetch_pending_articles` fonksiyonu, veritabanına giderek
+   henüz yapay zeka tarafından işlenmemiş (kalite puanı veya özeti olmayan) haberleri çeker.
+2. CREW AI BAŞLATMA: `tsn_crew = TsnMediaCrew()` ile, sunumda bahsettiğimiz ajanlar 
+   (Scoring Agent, Categorization Agent, Summarization Agent) ayağa kaldırılır.
+3. İŞLEME DÖNGÜSÜ: `tsn_crew.crew().kickoff(inputs=inputs)` komutuyla haber sırayla ajanlara verilir.
+   - Önce puanlanır (Score < 50 ise reddedilir)
+   - Ardından Kategorisi belirlenir.
+   - En son TL;DR özeti çıkartılır.
+4. VERİTABANI GÜNCELLEME: Ajanların kullandığı "Tools" (Araçlar), sonuçları doğrudan 
+   veritabanına yazarak front-end (Angular) arayüzüne düşmesini sağlar.
 """
 
 import logging
@@ -135,27 +151,20 @@ def fetch_available_categories() -> str:
 
 
 def run():
-    """Main execution loop — processes all pending articles through the crew."""
+    """
+    Ana Çalıştırma Döngüsü (Main Execution Loop)
+    SUNUMDAKİ YERİ: Terminaldeki "Starting Autonomous Web Scraping & Processing (INFINITE LOOP)..."
+    kısmının, veritabanı kontrollü çalışan gerçek production versiyonudur.
+    """
     logger.info("=" * 60)
     logger.info("TSN Media AI Worker başlatılıyor...")
     logger.info("=" * 60)
-<<<<<<< HEAD
-=======
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     # Fetch pending articles
     pending = fetch_pending_articles(limit=10)
     if not pending:
         logger.info("İşlenecek bekleyen haber bulunamadı. Çıkış yapılıyor.")
         return
-<<<<<<< HEAD
-    logger.info("%d adet bekleyen haber bulundu.", len(pending))
-    # Fetch available categories once
-    available_categories = fetch_available_categories()
-    logger.info("Mevcut kategoriler: %s", available_categories)
-    # Initialize crew
-    tsn_crew = TsnMediaCrew()
-=======
 
     logger.info("%d adet bekleyen haber bulundu.", len(pending))
 
@@ -166,7 +175,6 @@ def run():
     # Initialize crew
     tsn_crew = TsnMediaCrew()
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     # Process each article
     for idx, article_data in enumerate(pending, start=1):
         if idx > 1:
@@ -175,20 +183,14 @@ def run():
                 _MIN_INTERVAL_SEC,
             )
             time.sleep(_MIN_INTERVAL_SEC)
-<<<<<<< HEAD
-=======
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
         logger.info(
             "[%d/%d] İşleniyor: ID=%d — %s",
             idx, len(pending),
             article_data["article_id"],
             article_data["title"][:80],
         )
-<<<<<<< HEAD
-=======
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
         try:
             inputs = {
                 "article_id": article_data["article_id"],
@@ -196,20 +198,16 @@ def run():
                 "content": article_data["content"],
                 "available_categories": available_categories,
             }
-<<<<<<< HEAD
-=======
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
+            # SUNUMDAKİ YERİ: Tüm yapay zeka süreçlerinin (Puanlama -> Kategori -> Özet)
+            # tek bir komutla sırayla çalıştırıldığı yer. (Sequential Process)
             result = tsn_crew.crew().kickoff(inputs=inputs)
             logger.info(
                 "[%d/%d] TAMAMLANDI: ID=%d",
                 idx, len(pending), article_data["article_id"],
             )
             logger.debug("Crew sonucu: %s", result)
-<<<<<<< HEAD
-=======
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
         except Exception as e:
             logger.error(
                 "[%d/%d] HATA: ID=%d — %s",
@@ -218,17 +216,11 @@ def run():
             if _is_rate_limit_error(e):
                 _sleep_for_rate_limit(e)
             continue
-<<<<<<< HEAD
-=======
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     logger.info("=" * 60)
     logger.info("Tüm bekleyen haberler işlendi. AI Worker tamamlandı.")
     logger.info("=" * 60)
 
-<<<<<<< HEAD
-=======
 
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
 if __name__ == "__main__":
     run()
