@@ -36,8 +36,14 @@ categorize_task:
     1. KESİNLİKLE en fazla 3 kategori seç.
     2. Sadece yukarıdaki listeden kategori seçebilirsin, yeni kategori UYDURMA.
     3. Haberin ana teması ve alt temaları için en uygun kategorileri belirle.
+    4. Bu görev yalnızca kalite puanı eşik değerini geçen haberlerde çalışır.
+
+    KATEGORİLERİ DB'ye yazmak için:
+    - MUTLAKA `update_score_and_categories` aracını çağır.
+    - `article_id`, mevcut kalite puanı ve seçilen kategori adlarını gönder.
+    - En fazla 3 kategori gönder; tek kategori yeterliyse tek kategori gönder.
   expected_output: >
-    Makale ID'si ve seçilen kategori adlarının listesi (en fazla 3 adet).
+    update_score_and_categories çağrısı yapıldı; makale ID'si ve seçilen kategori adları kaydedildi.
   agent: categorization_agent
 
 summarize_task:
@@ -53,6 +59,10 @@ summarize_task:
     2. Her madde en fazla 1-2 cümle olmalı.
     3. Haberin ana fikrini, önemli detayları ve sonucunu kapsamalı.
     4. Gereksiz kelimeler ve tekrarlar olmamalı.
+
+    ÖZETİ DB'ye yazmak için:
+    - MUTLAKA `update_summary` aracını çağır.
+    - `article_id` ve ürettiğin TL;DR özet metnini gönder.
   expected_output: >
-    Makale ID'si ve 3-4 maddelik kısa TL;DR özeti.
+    update_summary çağrısı yapıldı; makale ID'si ve 3-4 maddelik kısa TL;DR özeti kaydedildi.
   agent: summarization_agent

@@ -49,7 +49,13 @@ class GetPendingNewsTool(BaseTool):
     """
     Fetches articles from the database that have NOT yet been processed by AI.
     Filter: ai_quality_score IS NULL OR summary IS NULL
-    Returns article id, title, and content to save tokens.
+
+    demo_simulation.py RSS'ten bir item çektiğinde title/link/description üçlüsü
+    üretir. Bu araç aynı üçlüyü veritabanından verir:
+        - ID      -> pipeline içinde izleme ve DB update anahtarı
+        - Link    -> MCP Browser node'unun canlı sayfayı açması için
+        - Başlık  -> skor, özet ve ses üretimi için ana sinyal
+        - İçerik  -> LLM'e gönderilecek metin; token tasarrufu için kısaltılır
     """
     name: str = "get_pending_news"
     description: str = (
@@ -82,6 +88,7 @@ class GetPendingNewsTool(BaseTool):
                 text_content = article.content or article.summary or ""
                 results.append(
                     f"ID: {article.id}\n"
+                    f"Link: {article.link}\n"
                     f"Başlık: {article.title}\n"
                     f"İçerik: {text_content[:2000]}\n"  # Token tasarrufu: max 2000 karakter
                     f"---"
@@ -110,6 +117,14 @@ class SaveQualityScoreTool(BaseTool):
     """
     Writes the AI quality score (ai_quality_score) for an article.
     Categorization and summary are handled separately (not by this tool).
+
+    Bu ayrım demo akışı için kritiktir:
+        1. Önce yalnızca kalite puanı hesaplanır ve DB'ye yazılır.
+        2. LangGraph route_by_score puanı okur.
+        3. score < 50 ise haber kategori/özet/ses adımlarına hiç girmez.
+        4. score >= 50 ise CrewAI kategori ve özet ajanları devreye girer.
+
+    Yani bu tool "karar kapısı" öncesindeki tek yazma işlemidir.
     """
 
     name: str = "save_quality_score"
@@ -146,7 +161,9 @@ class _UpdateScoreAndCategoriesInput(BaseModel):
     article_id: int = Field(..., description="Güncellenecek makalenin ID'si")
     score: int = Field(..., ge=1, le=100, description="1-100 arası kalite puanı")
     category_names: list[str] = Field(
-        ..., description="Atanacak kategori adları listesi (en fazla 3)"
+        ...,
+        max_length=3,
+        description="Atanacak kategori adları listesi (en fazla 3)"
     )
 
 
@@ -155,6 +172,14 @@ class UpdateScoreAndCategoriesTool(BaseTool):
     Updates the ai_quality_score for an article and links it to categories
     via the article_categories many-to-many junction table.
     Enforces a maximum of 3 categories.
+
+    demo_simulation.py terminalinde görünen:
+        Assigned Categories: ['Gündem']
+
+    satırının production karşılığı bu tool'dur. Kategoriler Article.category
+    alanına değil, Article.ai_categories many-to-many ilişkisine yazılır; böylece
+    RSS kaynağının varsayılan kategorisi ile AI'ın seçtiği kategoriler birbirine
+    karışmaz.
     """
     name: str = "update_score_and_categories"
     description: str = (

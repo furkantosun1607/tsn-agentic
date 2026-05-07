@@ -1,20 +1,27 @@
 """
-TSN Media — Media Generation Stub Nodes
-=======================================
-Şemadaki "Voice Synthesis Agent" ve "Video Generation Agent" düğümlerinin
-LangGraph node implementasyonları.
+TSN Media — Media Generation Nodes
+==================================
+Bu dosya demo_simulation.py içindeki şu bölümü production graph'a taşır:
 
-Durum: STUB (Phase 2 Placeholder)
-    Bu node'lar şu an gerçek API çağrısı yapmaz; sabırlı bir log mesajı
-    bırakır ve state'i olduğu gibi geçirir. Amaç:
-    1. LangGraph graph yapısının şimdi tamamlanmış olması (node eksik kalmaz)
-    2. LangSmith'te voice/video adımlarının trace'de görünmesi
-    3. Phase 2'de sadece _run_voice_api() ve _run_video_api() fonksiyonlarını
-       doldurmak yeterli — graph yapısı değişmez.
+    [LangGraph] Voice Synthesis Node generating audio from title...
+    [Voice Node] Audio file actually generated: audio_outputs/voice_1043.mp3
+    [Voice Node] Playing synthesized audio...
 
-Phase 2 Entegrasyon Hedefleri:
-    - Voice Synthesis: Google Cloud Text-to-Speech API veya ElevenLabs API
-    - Video Generation: RunwayML API veya Sora API
+Demo dosyası kullanıcıya sahnede gerçek bir deneyim göstermek için gTTS ile
+başlığı MP3'e çevirip pygame ile oynatır. Production worker tarafında aynı
+akışı iki katmana ayırıyoruz:
+
+1. voice_synthesis_node
+   Haberin başlığını ses üretim girdisi kabul eder. Varsayılan olarak dış API
+   çağırmaz; ancak MEDIA_ENABLE_LOCAL_TTS=true yapılırsa demo'daki gTTS
+   mantığına benzer şekilde audio_outputs klasörüne MP3 yazmayı dener.
+
+2. video_generation_node
+   Demo'da henüz görsel olarak işlenmeyen fakat mimaride gösterilen genişletme
+   noktasıdır. Şimdilik güvenli placeholder olarak kalır.
+
+Bu görevde kodu çalıştırmak istenmediği için node'lar bol açıklamalı ve
+opsiyonel çalışacak şekilde düzenlenmiştir.
 
 Kullanım:
     from ai_workers.media_nodes import voice_synthesis_node, video_generation_node
@@ -26,12 +33,14 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 logger = logging.getLogger("media_nodes")
 
 # Phase 2 yapılandırması (şu an kullanılmıyor, yer tutucu olarak bırakıldı)
-_VOICE_API_PROVIDER = os.environ.get("VOICE_API_PROVIDER", "google_tts")  # google_tts | elevenlabs
+_VOICE_API_PROVIDER = os.environ.get("VOICE_API_PROVIDER", "local_gtts")  # local_gtts | google_tts | elevenlabs
 _VIDEO_API_PROVIDER = os.environ.get("VIDEO_API_PROVIDER", "runwayml")    # runwayml | sora
+_MEDIA_ENABLE_LOCAL_TTS = os.environ.get("MEDIA_ENABLE_LOCAL_TTS", "false").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -40,18 +49,45 @@ _VIDEO_API_PROVIDER = os.environ.get("VIDEO_API_PROVIDER", "runwayml")    # runw
 
 def _run_voice_api(text: str, article_id: int) -> str | None:
     """
-    [PHASE 2 PLACEHOLDER]
-    TTS API'sine metin gönderecek ve audio dosyasının URL'ini döndürecek.
+    Ses üretim katmanı.
 
-    Hedef implementasyon:
-        if _VOICE_API_PROVIDER == "google_tts":
-            from google.cloud import texttospeech
-            # ... Google TTS çağrısı
-        elif _VOICE_API_PROVIDER == "elevenlabs":
-            import requests
-            # ... ElevenLabs API çağrısı
+    demo_simulation.py doğrudan gTTS(text=title, lang="tr") çağırır. Burada
+    aynı davranışı opsiyonel yapıyoruz, çünkü production worker her çalıştığında
+    yerel dosya üretmek veya internet üzerinden gTTS'e gitmek istenmeyebilir.
+
+    Dönüş değeri:
+        - Başarılıysa audio_outputs/voice_<article_id>.mp3 gibi göreli yol.
+        - Kapalıysa veya hata olursa None.
+
+    Phase 2 hedefleri:
+        - local_gtts  : demo ile birebir uyumlu, hızlı prototip modu
+        - google_tts  : Google Cloud Text-to-Speech entegrasyonu
+        - elevenlabs  : daha doğal stüdyo sesi entegrasyonu
     """
-    # TODO: Phase 2'de gerçek API entegrasyonu
+    if not text:
+        return None
+
+    if _VOICE_API_PROVIDER == "local_gtts" and _MEDIA_ENABLE_LOCAL_TTS:
+        try:
+            from gtts import gTTS
+
+            project_root = Path(__file__).resolve().parents[1]
+            audio_dir = project_root / "audio_outputs"
+            audio_dir.mkdir(exist_ok=True)
+
+            audio_path = audio_dir / f"voice_{article_id}.mp3"
+            tts = gTTS(text=text, lang="tr")
+            tts.save(str(audio_path))
+            return f"audio_outputs/{audio_path.name}"
+        except Exception as exc:
+            logger.warning(
+                "[VoiceSynthesis] ID=%d | local_gtts başarısız: %s",
+                article_id,
+                exc,
+            )
+            return None
+
+    # TODO: Phase 2'de google_tts / elevenlabs gerçek API entegrasyonu
     return None
 
 
@@ -79,19 +115,24 @@ def voice_synthesis_node(state: dict) -> dict:
     Voice Synthesis LangGraph Node.
     Şemadaki "Voice Synthesis Agent" kutusunun karşılığı.
 
-    Şu an STUB — Phase 2'de gerçek TTS API entegrasyonu yapılacak.
-    LangSmith bu node'u trace eder; gecikme ve durum izlenebilir.
+    Demo ile bilinçli uyum:
+        - Ses metni olarak summary değil title kullanılır.
+        - Çünkü demo_simulation.py yalnızca haber başlığını seslendirir.
+        - Summary daha uzun ve haber spikeri metni gibi okunabilir; fakat bu
+          demo akışının gösterdiği davranış değildir.
+
+    MEDIA_ENABLE_LOCAL_TTS=false iken node sadece log bırakır ve audio_url=None
+    döndürür. Bu, kodu çalıştırmadan mimariyi göstermek için güvenlidir.
     """
     article_id = state.get("article_id", 0)
-    summary = state.get("summary") or ""
+    title = state.get("title") or ""
 
     logger.info(
         "[VoiceSynthesis] Node tetiklendi → ID=%d | [PHASE 2 STUB]",
         article_id,
     )
 
-    # Phase 2: audio_url = _run_voice_api(summary, article_id)
-    audio_url = _run_voice_api(summary, article_id)
+    audio_url = _run_voice_api(title, article_id)
 
     if audio_url:
         logger.info(
@@ -101,8 +142,8 @@ def voice_synthesis_node(state: dict) -> dict:
     else:
         logger.info(
             "[VoiceSynthesis] ID=%d | STUB: Phase 2'de aktif olacak "
-            "(Hedef API: %s)",
-            article_id, _VOICE_API_PROVIDER
+            "(Provider: %s, local_tts_enabled=%s)",
+            article_id, _VOICE_API_PROVIDER, _MEDIA_ENABLE_LOCAL_TTS
         )
 
     return {**state, "audio_url": audio_url}

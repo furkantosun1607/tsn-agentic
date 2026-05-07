@@ -3,20 +3,33 @@ TSN Media — LangGraph Orchestration Layer (AI Orchestration Layer)
 ==================================================================
 Bu dosya sistemin karar mekanizmasidir.
 
-Sunum adimlarinin koddaki karsiligi:
-1) ingest_article: ham haber dogrulama
-2) scoring_node: kalite puanlama
-3) route_by_score: kosullu dallanma
-4) categorize_and_summarize_node: kategori + ozet
-5) voice_synthesis_node/video_generation_node: medya adimlari (stub)
-6) personalization_node: etiketleme
-7) save_results_node: final durum
+demo_simulation.py ile birebir zihinsel harita:
+1) ingest_article
+   RSS'ten veya DB'den gelen ham haber kaydını doğrular.
+2) mcp_browser_node
+   Demo'daki "[MCP Tool] Initiating Browser Context..." satırının production
+   karşılığıdır. URL varsa canlı sayfadan metin zenginleştirmesi yapabilir.
+3) scoring_node
+   Demo'daki "[LangChain Node] Sending content to Local Ollama..." adımıdır.
+4) route_by_score
+   Demo'daki "SCORE < 50 -> REJECTED" ve "SCORE >= 50 -> APPROVED" ayrımıdır.
+5) categorize_and_summarize_node
+   Demo'daki CrewAI orkestrasyonudur: kategori seçimi ve TL;DR üretimi.
+6) voice_synthesis_node / video_generation_node
+   Demo'daki ses üretimi adımının production node'larıdır. Video şimdilik
+   genişletme noktasıdır.
+7) personalization_node
+   Demo'da gösterilmeyen ama backend ürünleşme tarafında kullanılan ek
+   segmentasyon adımıdır; onaylanan haberden kullanıcı etiketleri üretir.
+8) save_results_node
+   Terminaldeki "PIPELINE COMPLETED" satırının production karşılığıdır.
 
 Graph akisi:
-START -> ingest_article -> scoring_node -> route_by_score
+START -> ingest_article -> route_after_ingest
+ready -> mcp_browser_node -> scoring_node -> route_by_score
 approved -> categorize_and_summarize_node -> voice_synthesis_node ->
 video_generation_node -> personalization_node -> save_results_node -> END
-discard/error -> discard_node -> personalization_node -> save_results_node -> END
+discard/error -> discard_node -> save_results_node -> END
 """
 
 from __future__ import annotations
@@ -24,6 +37,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import asyncio
 from typing import Literal
 
 from typing_extensions import TypedDict
@@ -45,6 +59,8 @@ logger = logging.getLogger("langgraph_flow")
 
 # Threshold: ortam değişkeninden okunur, varsayılan 50
 SCORE_THRESHOLD = int(os.environ.get("SCORE_THRESHOLD", "50"))
+MCP_BROWSER_ENABLED = os.environ.get("MCP_BROWSER_ENABLED", "false").lower() == "true"
+MCP_BROWSER_TEXT_LIMIT = int(os.environ.get("MCP_BROWSER_TEXT_LIMIT", "2000"))
 
 logger.info("LangGraph flow yüklendi | SCORE_THRESHOLD=%d", SCORE_THRESHOLD)
 
@@ -59,9 +75,13 @@ class ArticleState(TypedDict):
     # -- Girdi (main_langgraph.py tarafından doldurulur) --------------------
     article_id: int
     title: str
+    source_url: str | None
     content: str
     available_categories: str
     score_threshold: int          # SCORE_THRESHOLD env'den gelir
+
+    # -- MCP Browser çıktısı ------------------------------------------------
+    mcp_excerpt: str | None       # Canlı URL okumasından gelen kısa metin
 
     # -- CrewAI Çıktıları ---------------------------------------------------
     quality_score: int | None     # scoring_node tarafından doldurulur
@@ -119,8 +139,16 @@ def _read_categories_from_db(article_id: int) -> list[str]:
     session = SessionLocal()
     try:
         article = session.query(Article).filter(Article.id == article_id).first()
-        if article and article.categories:
-            return [cat.name for cat in article.categories]
+        # Article modelinde iki farklı kategori ilişkisi bulunur:
+        #   category      -> RSS kaynağından gelen tek "varsayılan" kategori
+        #   ai_categories -> CrewAI'nin article_categories junction tablosuna
+        #                    yazdığı çoklu AI kategorileri
+        #
+        # Demo akışında "Assigned Categories: ['Gündem']" olarak görünen çıktı
+        # CrewAI tarafından üretilen sınıflandırmadır; bu yüzden burada
+        # article.ai_categories okunmalıdır.
+        if article and article.ai_categories:
+            return [cat.name for cat in article.ai_categories]
         return []
     except Exception as exc:
         logger.error("[Flow] DB'den kategoriler okunurken hata: %s", exc)
@@ -185,7 +213,130 @@ def ingest_article(state: ArticleState) -> ArticleState:
 
 
 # ===========================================================================
-# NODE 2 — scoring_node
+# CONDITIONAL EDGE — route_after_ingest
+# demo_simulation.py RSS'ten veri alamazsa "continue" ile bir sonraki URL'e geçer.
+# Production graph'ta aynı fikri burada uyguluyoruz: eksik/geçersiz haberler
+# scoring'e hiç gitmez, doğrudan discard_node'a yönlenir.
+# ===========================================================================
+
+def route_after_ingest(
+    state: ArticleState,
+) -> Literal["mcp_browser_node", "discard_node"]:
+    """
+    ingest_article sonucuna göre ilk yol ayrımını yapar.
+
+    Bu fonksiyon özellikle maliyet kontrolü için önemlidir: başlığı olmayan veya
+    içeriği çok kısa olan haberleri LLM'e göndermek hem token israfı yaratır hem
+    de demo akışındaki "item yoksa atla" davranışına ters düşer.
+    """
+    if state.get("status") == "discarded":
+        return "discard_node"
+    return "mcp_browser_node"
+
+
+# ===========================================================================
+# NODE 2 — mcp_browser_node
+# Demo'daki canlı tarayıcı adımının production karşılığı.
+# ===========================================================================
+
+async def _read_url_text_with_playwright(url: str) -> str:
+    """
+    Playwright ile haber URL'ini açıp sayfanın görünen metninden kısa bir bölüm
+    döndürür.
+
+    Bu yardımcı fonksiyon bilerek küçük tutuldu:
+    - MCP server ayrı bir süreç olarak da çalışabilir.
+    - LangGraph node'u ise aynı davranışı doğrudan pipeline içinde göstermek
+      için bu fonksiyonu kullanabilir.
+    - Kodun bu görevde çalıştırılması istenmediği için entegrasyon noktası
+      ayrıntılı yorumla bırakıldı; runtime ortamında Playwright kurulu değilse
+      node güvenli şekilde mevcut DB içeriğiyle devam eder.
+    """
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            await page.evaluate("window.scrollBy(0, 700)")
+            await page.wait_for_timeout(750)
+            text = await page.evaluate("document.body.innerText")
+            return (text or "").strip()
+        finally:
+            await browser.close()
+
+
+def mcp_browser_node(state: ArticleState) -> ArticleState:
+    """
+    Canlı haber URL'inden ek metin okumaya çalışan MCP/Browser düğümü.
+
+    demo_simulation.py içinde bu adım görsel amaçla gerçek Chrome penceresini
+    açıp birkaç saniye sonra kapatır. Production worker'da aynı davranışın
+    daha kontrollü hali kullanılır:
+        - URL yoksa mevcut DB içeriğiyle devam edilir.
+        - MCP_BROWSER_ENABLED=false ise tarayıcı açılmaz; demo eşleşmesi log ve
+          state seviyesinde korunur.
+        - MCP_BROWSER_ENABLED=true ve Playwright hazırsa sayfa metni okunur.
+        - Okunan metin content'in önüne değil, sonuna eklenir; DB'den gelen
+          normalize edilmiş metin önceliğini kaybetmez.
+
+    Böylece bu node hem sunumda anlatılan MCP Browser adımını temsil eder hem de
+    tarayıcı bağımlılığı olmadığı ortamlarda pipeline'ı kırmaz.
+    """
+    article_id = state["article_id"]
+    source_url = state.get("source_url")
+
+    logger.info(
+        "[mcp_browser_node] ID=%d | Browser context hazırlanıyor | URL=%s",
+        article_id,
+        source_url or "yok",
+    )
+
+    if not source_url:
+        logger.info(
+            "[mcp_browser_node] ID=%d | URL bulunmadı; DB içeriği kullanılacak.",
+            article_id,
+        )
+        return {**state, "mcp_excerpt": None}
+
+    if not MCP_BROWSER_ENABLED:
+        logger.info(
+            "[mcp_browser_node] ID=%d | MCP_BROWSER_ENABLED=false; "
+            "demo akışı korunuyor, canlı tarayıcı okuması atlandı.",
+            article_id,
+        )
+        return {**state, "mcp_excerpt": None}
+
+    try:
+        live_text = asyncio.run(_read_url_text_with_playwright(source_url))
+    except Exception as exc:
+        logger.warning(
+            "[mcp_browser_node] ID=%d | Tarayıcı okuması başarısız: %s. "
+            "Mevcut DB içeriğiyle devam ediliyor.",
+            article_id,
+            exc,
+        )
+        return {**state, "mcp_excerpt": None}
+
+    excerpt = live_text[:MCP_BROWSER_TEXT_LIMIT]
+    merged_content = "\n\n[Canlı sayfadan MCP Browser ile okunan ek metin]\n" + excerpt
+
+    logger.info(
+        "[mcp_browser_node] ID=%d | Canlı içerik okundu | Ek metin uzunluğu=%d",
+        article_id,
+        len(excerpt),
+    )
+
+    return {
+        **state,
+        "content": ((state.get("content") or "") + merged_content)[:4000],
+        "mcp_excerpt": excerpt,
+    }
+
+
+# ===========================================================================
+# NODE 3 — scoring_node
 # CrewAI scoring_crew() çalıştırır.
 # SaveQualityScoreTool puanı DB'ye yazar; node ardından DB'den okur.
 # score >= threshold → "approved", aksi → "discarded"
@@ -261,7 +412,7 @@ def route_by_score(
 
 
 # ===========================================================================
-# NODE 3a — categorize_and_summarize_node
+# NODE 4a — categorize_and_summarize_node
 # Sadece onaylanan haberler için.
 # CrewAI categorize_summary_crew() çalıştırır (quality_score ile).
 # ===========================================================================
@@ -326,7 +477,7 @@ def categorize_and_summarize_node(state: ArticleState) -> ArticleState:
 
 
 # ===========================================================================
-# NODE 3b — discard_node
+# NODE 4b — discard_node
 # Düşük kaliteli veya geçersiz haberler için.
 # Şemadaki "Discard" kutusuna karşılık gelir.
 # ===========================================================================
@@ -353,11 +504,13 @@ def discard_node(state: ArticleState) -> ArticleState:
         "status": "discarded",
         "categories": [],
         "summary": None,
+        "audio_url": None,
+        "video_url": None,
     }
 
 
 # ===========================================================================
-# NODE 4 — personalization_node (LangChain LCEL)
+# NODE 7 — personalization_node (LangChain LCEL)
 # Hem onaylanan hem reddedilen haberler buraya gelir.
 # Şemada her iki yoldan da Personalization Agent'a ok var.
 # ===========================================================================
@@ -366,8 +519,13 @@ def personalization_node(state: ArticleState) -> ArticleState:
     """
     LangChain LCEL Personalization zincirini çalıştırır.
 
+    Demo hizalamasından sonra bu node yalnızca onaylanan haberlerde çalışır.
+    Çünkü demo_simulation.py düşük puanlı haberlerde kategori/özet/ses gibi
+    pahalı adımları çalıştırmadan sıradaki URL'e geçer.
+
     - Onaylanan haberler → pozitif kullanıcı segmenti etiketleri
-    - Reddedilen haberler → negatif sinyal etiketleri (filtre geri bildirimi)
+    - Reddedilen haberler → discard_node üzerinden doğrudan save_results_node'a
+      gider; burada personalization çalıştırılmaz.
 
     LCEL zinciri: ChatPromptTemplate | ChatGoogleGenerativeAI.with_structured_output()
     LangSmith LANGCHAIN_TRACING_V2=true ise bu zinciri de otomatik izler.
@@ -401,7 +559,7 @@ def personalization_node(state: ArticleState) -> ArticleState:
 
 
 # ===========================================================================
-# NODE 5 — save_results_node
+# NODE 8 — save_results_node
 # Pipeline'ın son adımı: durumu loglayıp final olarak işaretler.
 # İleride Cloud Storage URL'lerini backend'e bildirim olarak gönderebilir.
 # ===========================================================================
@@ -409,6 +567,14 @@ def personalization_node(state: ArticleState) -> ArticleState:
 def save_results_node(state: ArticleState) -> ArticleState:
     """
     Pipeline tamamlandı. Final durumu loglar.
+
+    Önemli ayrım:
+        - Onaylanan haberlerde buraya kategori, özet, ses/video ve
+          personalization çıktılarıyla gelinir.
+        - Reddedilen haberlerde demo_simulation.py davranışına uygun olarak
+          kategori/özet/medya adımları çalışmaz; save_results_node sadece
+          reddetme kararını terminal/log seviyesinde görünür kılar.
+
     Phase 2: audio_url / video_url'i backend API'ye POST edebilir.
     """
     article_id = state["article_id"]
@@ -435,7 +601,11 @@ def save_results_node(state: ArticleState) -> ArticleState:
         video,
     )
 
-    return {**state, "status": "completed"}
+    # status alanını "completed" yapmıyoruz; çünkü demo akışında düşük puanlı
+    # haber "tamamlandı" değil, "reddedildi ve sıradaki URL'e geçildi" olarak
+    # görünür. main_langgraph.py istatistiklerinin completed/discarded ayrımını
+    # doğru görebilmesi için semantic status korunur.
+    return state
 
 
 # ===========================================================================
@@ -452,6 +622,7 @@ def build_graph() -> StateGraph:
 
     # -- Node'ları ekle ------------------------------------------------------
     graph.add_node("ingest_article", ingest_article)
+    graph.add_node("mcp_browser_node", mcp_browser_node)
     graph.add_node("scoring_node", scoring_node)
     graph.add_node("discard_node", discard_node)
     graph.add_node("categorize_and_summarize_node", categorize_and_summarize_node)
@@ -463,9 +634,22 @@ def build_graph() -> StateGraph:
     # -- Giriş noktası -------------------------------------------------------
     graph.set_entry_point("ingest_article")
 
-    # -- Sabit edge: ingest → scoring ----------------------------------------
-    # (Her haber scoring'e gider; çok kısa içerikler ingest'te zaten discard edilir)
-    graph.add_edge("ingest_article", "scoring_node")
+    # -- Koşullu edge: ingest sonrası ilk kalite kapısı ----------------------
+    # demo_simulation.py içinde RSS item alınamazsa döngü "continue" eder.
+    # Burada geçersiz haberler LLM'e gitmeden discard_node'a düşer.
+    graph.add_conditional_edges(
+        "ingest_article",
+        route_after_ingest,
+        {
+            "mcp_browser_node": "mcp_browser_node",
+            "discard_node": "discard_node",
+        },
+    )
+
+    # -- Sabit edge: MCP Browser → scoring ----------------------------------
+    # Canlı sayfa okuması tamamlandıktan veya kontrollü şekilde atlandıktan
+    # sonra haber artık demo'daki LangChain/Ollama scoring adımına hazırdır.
+    graph.add_edge("mcp_browser_node", "scoring_node")
 
     # -- Koşullu edge: scoring sonrası yön tayini ----------------------------
     # route_by_score() → "approved"  → categorize_and_summarize_node
@@ -485,8 +669,10 @@ def build_graph() -> StateGraph:
     graph.add_edge("video_generation_node", "personalization_node")
 
     # -- Sabit edge: reddedilen haberler yolu --------------------------------
-    # Şemada discard'dan da personalization'a ok var (negatif sinyal)
-    graph.add_edge("discard_node", "personalization_node")
+    # demo_simulation.py düşük puanlı haberde kategori/özet/ses adımlarına
+    # girmeden "Skipping to next URL..." der. Bu yüzden discard doğrudan final
+    # log node'una bağlanır.
+    graph.add_edge("discard_node", "save_results_node")
 
     # -- Sabit edge: personalization → save → END ----------------------------
     graph.add_edge("personalization_node", "save_results_node")

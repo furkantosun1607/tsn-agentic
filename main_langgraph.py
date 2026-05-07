@@ -122,7 +122,20 @@ def _sleep_for_rate_limit(exc: BaseException) -> None:
 # ---------------------------------------------------------------------------
 
 def fetch_pending_articles(limit: int = 10) -> list[dict]:
-    """Henüz işlenmemiş haberleri veritabanından getirir."""
+    """
+    Henüz işlenmemiş haberleri veritabanından getirir.
+
+    demo_simulation.py tarafında RSS'ten dönen veri üç parçadan oluşur:
+        - title       : Terminalde gösterilen haber başlığı
+        - link        : MCP Browser adımında açılan canlı haber URL'i
+        - description : LLM'e gönderilen kısa metin
+
+    Production worker'da aynı üçlüyü veritabanından kuruyoruz. Article.content
+    varsa onu kullanıyoruz; yoksa RSS summary alanı demo'daki description gibi
+    davranıyor. Article.link ayrıca state'e taşınıyor ki LangGraph içindeki
+    mcp_browser_node, demo'daki "Initiating Browser Context" adımını temsil
+    edebilsin.
+    """
     session = SessionLocal()
     try:
         articles = (
@@ -140,6 +153,7 @@ def fetch_pending_articles(limit: int = 10) -> list[dict]:
             {
                 "article_id": a.id,
                 "title": a.title,
+                "source_url": a.link,
                 "content": (a.content or a.summary or "")[:2000],
             }
             for a in articles
@@ -229,6 +243,7 @@ def run() -> None:
         initial_state: ArticleState = {
             "article_id": article_id,
             "title": article_data["title"],
+            "source_url": article_data.get("source_url"),
             "content": article_data["content"],
             "available_categories": available_categories,
             "score_threshold": SCORE_THRESHOLD,
@@ -236,6 +251,7 @@ def run() -> None:
             "quality_score": None,
             "categories": [],
             "summary": None,
+            "mcp_excerpt": None,
             "audio_url": None,
             "video_url": None,
             "personalization_tags": [],
@@ -259,7 +275,11 @@ def run() -> None:
 
             final_status = final_state.get("status", "unknown")
 
-            if final_status == "completed":
+            # save_results_node artık semantic status'u koruyor:
+            #   approved  -> demo'daki "PIPELINE COMPLETED SUCCESSFULLY"
+            #   discarded -> demo'daki "SCORE < 50 ... Skipping to next URL"
+            # Bu nedenle approved burada tamamlanan iş olarak sayılır.
+            if final_status in {"completed", "approved"}:
                 stats["completed"] += 1
             elif final_status == "discarded":
                 stats["discarded"] += 1

@@ -92,6 +92,25 @@ class TsnMediaCrew:
     1. Quality Scoring
     2. Categorization (max 3 categories)
     3. Summarization (TL;DR)
+
+    demo_simulation.py ile görev eşleşmesi:
+        - scoring_agent
+          "[LangChain - Ollama] AI Quality Score: 74/100" satırını üretir.
+          Production'da SaveQualityScoreTool ile puanı DB'ye yazar.
+
+        - categorization_agent
+          "[CrewAI] Task 1: @Categorization_Agent" satırının gerçek ajanıdır.
+          Sadece LangGraph route_by_score score >= threshold kararından sonra
+          çalıştırılır.
+
+        - summarization_agent
+          "[CrewAI] Task 2: @Summarization_Agent" satırının gerçek ajanıdır.
+          TL;DR metni üretir ve UpdateSummaryTool ile DB'ye kaydeder.
+
+    Not:
+        crew() metodu eski tek parça sıralı kullanım için korunur.
+        demo akışıyla birebir uyumlu kullanım LangGraph'ın çağırdığı
+        scoring_crew() ve categorize_summary_crew() metodlarıdır.
     """
 
     agents_config = "config/agents.yaml"
@@ -175,7 +194,15 @@ class TsnMediaCrew:
 
     @crew
     def crew(self) -> Crew:
-        """Assembles the TSN Media AI Crew with sequential processing."""
+        """
+        Eski tek parça CrewAI akışı.
+
+        Bu metot skor, kategori ve özeti tek sequential Crew içinde çalıştırır.
+        LangGraph öncesi mimariyi korumak için bırakılmıştır. Demo akışında
+        düşük puanlı haberler kategori/özet adımlarına girmediği için yeni
+        production giriş noktası bu metodu değil, aşağıdaki ayrık crew'ları
+        kullanır.
+        """
         return Crew(
             agents=[
                 self.scoring_agent(),
@@ -203,6 +230,10 @@ class TsnMediaCrew:
         LangGraph scoring_node tarafından çağrılır.
         SaveQualityScoreTool DB'ye puanı yazar; LangGraph node'u
         ardından DB'den okuyarak state'e ekler.
+
+        Bu ayrım demo_simulation.py içindeki threshold kararını mümkün kılar:
+        puan yazıldıktan sonra LangGraph route_by_score karar verir ve düşük
+        puanlı haberleri diğer ajanlara göndermeden durdurur.
         """
         return Crew(
             agents=[self.scoring_agent()],
@@ -235,9 +266,13 @@ class TsnMediaCrew:
                 "2. Sadece yukaridaki listeden kategori secebilirsin.\n"
                 "3. Haberin ana temasi ve alt temaları icin en uygun kategorileri belirle.\n\n"
                 f"NOT: Bu haberin kalite puani {quality_score}/100 olarak belirlendi.\n"
-                f"UpdateScoreAndCategoriesTool'u cagirirken score={quality_score} kullan."
+                f"UpdateScoreAndCategoriesTool'u cagirirken score={quality_score} kullan.\n"
+                "4. Kategori kararini DB'ye yazmak icin update_score_and_categories aracini MUTLAKA cagir."
             ),
-            expected_output="Makale ID ve secilen kategori adlari (en fazla 3 adet).",
+            expected_output=(
+                "update_score_and_categories cagrisi yapildi; makale ID ve "
+                "secilen kategori adlari DB'ye kaydedildi."
+            ),
             agent=self.categorization_agent(),
             tools=[GetAvailableCategoriesTool(), UpdateScoreAndCategoriesTool()],
             output_pydantic=CategorizationOutput,
@@ -255,9 +290,12 @@ class TsnMediaCrew:
                 "2. Her madde en fazla 1-2 cumle olmali.\n"
                 "3. Haberin ana fikrini, onemli detaylari ve sonucunu kapsamali.\n"
                 "4. Gereksiz kelimeler ve tekrarlar olmamali.\n"
-                "5. Ozeti update_summary araci ile kaydet."
+                "5. Ozeti update_summary araci ile MUTLAKA kaydet."
             ),
-            expected_output="Makale ID ve 3-4 maddelik kisa TL;DR ozeti.",
+            expected_output=(
+                "update_summary cagrisi yapildi; makale ID ve 3-4 maddelik "
+                "kisa TL;DR ozeti DB'ye kaydedildi."
+            ),
             agent=self.summarization_agent(),
             tools=[UpdateSummaryTool()],
             output_pydantic=SummaryOutput,

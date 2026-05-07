@@ -150,11 +150,22 @@ def fetch_available_categories() -> str:
         session.close()
 
 
-def run():
+def run_legacy_sequential():
     """
-    Ana Çalıştırma Döngüsü (Main Execution Loop)
-    SUNUMDAKİ YERİ: Terminaldeki "Starting Autonomous Web Scraping & Processing (INFINITE LOOP)..."
-    kısmının, veritabanı kontrollü çalışan gerçek production versiyonudur.
+    Eski CrewAI-only çalıştırma döngüsü.
+
+    Bu fonksiyon korunuyor çünkü CrewAI ajanlarını LangGraph olmadan tek başına
+    incelemek veya sunumda "önceki mimari" olarak göstermek faydalı olabilir.
+    Ancak demo_simulation.py akışıyla birebir uyumlu olan production yol artık
+    main_langgraph.run() içindedir:
+
+        ingest -> MCP Browser -> scoring -> threshold route
+        approved -> category/summary -> media -> personalization -> save
+        discarded -> save/next article
+
+    Bu legacy döngü tüm CrewAI task'larını tek kickoff içinde sırayla çalıştırır.
+    Dolayısıyla score < 50 kararında kategori/özet adımlarını otomatik kesemez.
+    Demo akışına uygun giriş noktası için alttaki run() wrapper'ı kullanılmalıdır.
     """
     logger.info("=" * 60)
     logger.info("TSN Media AI Worker başlatılıyor...")
@@ -220,6 +231,28 @@ def run():
     logger.info("=" * 60)
     logger.info("Tüm bekleyen haberler işlendi. AI Worker tamamlandı.")
     logger.info("=" * 60)
+
+
+def run():
+    """
+    Ana production giriş noktası.
+
+    demo_simulation.py terminalde hangi sırayı gösteriyorsa, ai_workers tarafında
+    da aynı sırayı LangGraph state machine ile main_langgraph.run() yürütür.
+    Bu dosya artık geriye dönük uyumluluk sağlar: eski komutlar
+
+        python -m ai_workers.main
+        python ai_workers/main.py
+
+    çalıştırıldığında da demo ile hizalanmış LangGraph akışına gider.
+    """
+    logger.info(
+        "main.py compatibility wrapper aktif; demo uyumlu akış için "
+        "main_langgraph.run() çağrılıyor."
+    )
+    from ai_workers.main_langgraph import run as run_langgraph
+
+    run_langgraph()
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ from mcp.server.fastmcp import FastMCP
 from ai_workers.db_tools import (
     GetPendingNewsTool,
     GetAvailableCategoriesTool,
+    SaveQualityScoreTool,
     UpdateSummaryTool,
     UpdateScoreAndCategoriesTool
 )
@@ -50,6 +51,21 @@ def get_available_categories() -> str:
     """Veritabanındaki tüm mevcut kategori adlarını getirir."""
     tool = GetAvailableCategoriesTool()
     return tool._run()
+
+@mcp.tool()
+def save_quality_score(article_id: int, score: int) -> str:
+    """
+    demo_simulation.py içindeki LangChain/Ollama skor adımının MCP üzerinden
+    DB'ye yazılan karşılığıdır.
+
+    Neden ayrı araç?
+        Demo akışında skor önce hesaplanır, sonra eşik kontrolü yapılır.
+        Kategori ve özet yalnızca skor >= 50 ise çalışır. Bu yüzden puanı tek
+        başına kaydedebilen ayrı bir MCP aracı gerekir; aksi halde düşük puanlı
+        haberlerde kategori/özet tarafına gereksiz geçilmiş olur.
+    """
+    tool = SaveQualityScoreTool()
+    return tool._run(article_id=article_id, score=score)
 
 @mcp.tool()
 def update_summary(article_id: int, summary: str) -> str:
