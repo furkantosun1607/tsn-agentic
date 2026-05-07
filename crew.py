@@ -1,7 +1,29 @@
 """
-TSN Media AI Crew — CrewAI orchestration module.
-Uses modern decorator-based API: @CrewBase, @agent, @task, @crew.
-Configured to use Google Gemini 2.5 Flash-Lite as the LLM.
+TSN MEDIA AI CREW — CrewAI ORCHESTRATION MODULE (SUNUM DETAYLARI)
+====================================================================
+Bu dosya, sunumda (demo_simulation.py) terminalde gosterilen 
+'[CrewAI] Task 1: @Categorization_Agent' ve '[LangChain Node] Scoring'
+gibi aşamaların *gerçek arka plan* kodlarını barındırır. 
+
+SUNUM İLE BAĞLANTISI (MİMARİ AÇIKLAMA):
+---------------------------------------
+1. LOKAL LLM (OLLAMA): Sunumda gördüğümüz "Connecting to Local Ollama instance..." 
+   kısmı tam olarak bu dosyadaki `_use_local_model` ayarı sayesinde gerçekleşir.
+   Tamamen ücretsiz, internet bağlantısı gerektirmeyen ve gizlilik odaklı bir 
+   yapay zeka modeli (ör. llama3.2:1b) kullanılarak maliyet sıfıra indirilmiştir.
+
+2. SCORING AGENT (Kalite Puanlaması): Sunumda "Score < 50" ise haberin reddedildiği 
+   adım, bu dosyadaki `scoring_agent` tarafından gerçekleştirilir. LangGraph 
+   tarafından çağrılır ve haberin kalitesini değerlendirip veritabanına kaydeder.
+
+3. CATEGORIZATION AGENT: Sunumda "Extracting taxonomies..." şeklinde gördüğümüz 
+   ajan budur. Haberi okuyup en uygun 3 kategoriyi belirler.
+
+4. SUMMARIZATION AGENT: Haberin uzun metnini kısa madde işaretlerine (bullet points)
+   çeviren 'TL;DR' özet ajanıdır. 
+
+Maliyet Odaklı Tasarım:
+    - FREE_TIER_MODE=true  -> Yerel (Local) Ollama Modelleri kullanılır (Sıfır maliyet).
 """
 
 import os
@@ -27,12 +49,39 @@ from ai_workers.db_tools import (
 from ai_workers.schemas import CategorizationOutput, ScoreOutput, SummaryOutput
 
 # ---------------------------------------------------------------------------
-# LLM Configuration — Google Gemini 2.5 Flash-Lite (override with GEMINI_MODEL)
+# LLM Configuration
 # ---------------------------------------------------------------------------
-gemini_llm = LLM(
-    model=os.environ.get("GEMINI_MODEL", "gemini/gemini-2.5-flash-lite"),
-    api_key=os.environ.get("GEMINI_API_KEY"),
-)
+# Varsayılan olarak yerel (local) model kullanımını aktif ediyoruz (Ollama).
+# Bu sayede ücretsiz, sınırsız ve gizli bir şekilde modelleri makinenizde çalıştırabilirsiniz.
+_use_local_model = os.environ.get("USE_LOCAL_MODEL", "true").lower() == "true"
+_local_model_name = os.environ.get("LOCAL_MODEL_NAME", "llama3.2:1b") # phi3.5:latest vb. kullanılabilir
+
+if _use_local_model:
+    # LangChain ChatOllama kullanarak Ollama'ya bağlanma yaklaşımı:
+    # NOT: Bunun için `pip install langchain-ollama` gerekir.
+    # from langchain_ollama import ChatOllama
+    # default_llm = ChatOllama(model=_local_model_name, base_url="http://localhost:11434")
+    
+    # CrewAI'nin kendi LLM sınıfı LiteLLM üzerinden Ollama'yı zaten desteklediği için,
+    # ekstra kütüphane kurmadan doğrudan bu şekilde de kullanabilirsiniz (önerilen):
+    default_llm = LLM(
+        model=f"ollama/{_local_model_name}",
+        base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    )
+else:
+    # Eğer USE_LOCAL_MODEL=false yapılırsa eski Gemini yapısına geri döner
+    _free_tier_mode = os.environ.get("FREE_TIER_MODE", "true").lower() == "true"
+    _default_model = (
+        "gemini/gemini-2.0-flash-lite"
+        if _free_tier_mode
+        else "gemini/gemini-2.5-flash-lite"
+    )
+
+    default_llm = LLM(
+        model=os.environ.get("GEMINI_MODEL", _default_model),
+        api_key=os.environ.get("GEMINI_API_KEY", "dummy-key-if-not-provided"),
+        temperature=float(os.environ.get("GEMINI_TEMPERATURE", "0.2")),
+    )
 
 
 @CrewBase
@@ -54,26 +103,39 @@ class TsnMediaCrew:
 
     @agent
     def scoring_agent(self) -> Agent:
+        """
+        SUNUMDAKİ ROLÜ: Haberi okuyup 1 ile 100 arasında bir kalite puanı verir.
+        Eğer haber "tık tuzağı (clickbait)", çok kısa veya güvenilmez ise
+        düşük puan verir. Sunumda bu adım "AI Quality Score: 74/100" şeklinde görünür.
+        """
         return Agent(
             config=self.agents_config["scoring_agent"],
             tools=[SaveQualityScoreTool()],
-            llm=gemini_llm,
+            llm=default_llm,
         )
 
     @agent
     def categorization_agent(self) -> Agent:
+        """
+        SUNUMDAKİ ROLÜ: Kalite eşiğini geçen (Score >= 50) haberlerin hangi 
+        kategoriye (Gündem, Spor, Teknoloji vb.) ait olduğunu belirler.
+        """
         return Agent(
             config=self.agents_config["categorization_agent"],
             tools=[GetAvailableCategoriesTool()],
-            llm=gemini_llm,
+            llm=default_llm,
         )
 
     @agent
     def summarization_agent(self) -> Agent:
+        """
+        SUNUMDAKİ ROLÜ: Uzun ve okuması zor haber metinlerini 3-4 maddelik
+        kısa, net (TL;DR) özetlere dönüştürür.
+        """
         return Agent(
             config=self.agents_config["summarization_agent"],
             tools=[],
-            llm=gemini_llm,
+            llm=default_llm,
         )
 
     # ------------------------------------------------------------------
@@ -108,18 +170,13 @@ class TsnMediaCrew:
         )
 
     # ------------------------------------------------------------------
-<<<<<<< HEAD
     # Crew Assembly — Orijinal (main.py ile uyumlu, DEĞİŞTİRİLMEDİ)
-=======
-    # Crew Assembly
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
     # ------------------------------------------------------------------
 
     @crew
     def crew(self) -> Crew:
         """Assembles the TSN Media AI Crew with sequential processing."""
         return Crew(
-<<<<<<< HEAD
             agents=[
                 self.scoring_agent(),
                 self.categorization_agent(),
@@ -209,10 +266,6 @@ class TsnMediaCrew:
         return Crew(
             agents=[self.categorization_agent(), self.summarization_agent()],
             tasks=[cat_task, sum_task],
-=======
-            agents=[self.scoring_agent()],  # Sadece puanlama calisir
-            tasks=[self.score_task()],      # Kategorize ve summary simdilik calistirilmaz
->>>>>>> 50e2c5f2e5e283caee3e285eb36f3cd1fe6a441f
             process=Process.sequential,
             verbose=True,
         )

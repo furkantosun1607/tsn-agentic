@@ -1,56 +1,22 @@
 """
-TSN Media — LangGraph Orchestration Layer  (AI Orchestration Layer)
-===================================================================
-Mimari şemadaki elmas (◆) şeklindeki "AI Orchestration Layer" kutusunun
-tam Python implementasyonu.
+TSN Media — LangGraph Orchestration Layer (AI Orchestration Layer)
+==================================================================
+Bu dosya sistemin karar mekanizmasidir.
 
-Bu dosya sistemin kalbidir:
-    - ArticleState: Bir haberin pipeline boyunca taşıdığı tüm veri
-    - Node'lar: Her agent/adım bir Python fonksiyonu
-    - Edge'ler: Node'lar arası geçiş kuralları (koşullu veya sabit)
-    - tsn_graph: Derlenmiş, çalıştırılmaya hazır StateGraph
+Sunum adimlarinin koddaki karsiligi:
+1) ingest_article: ham haber dogrulama
+2) scoring_node: kalite puanlama
+3) route_by_score: kosullu dallanma
+4) categorize_and_summarize_node: kategori + ozet
+5) voice_synthesis_node/video_generation_node: medya adimlari (stub)
+6) personalization_node: etiketleme
+7) save_results_node: final durum
 
-Teknoloji Stratejisi
---------------------
-| Bileşen                          | Teknoloji         | Gerekçe                          |
-|----------------------------------|-------------------|----------------------------------|
-| Orchestration (bu dosya)         | LangGraph         | Conditional routing, state mgmt  |
-| Scoring / Categorization / Özet  | CrewAI            | Multi-tool agent reasoning       |
-| Personalization                  | LangChain LCEL    | Tek adım; Crew ağırlığı yok      |
-| Voice / Video                    | Stub → Phase 2    | Graph yapısı hazır tutulur       |
-| Gözlemleme                       | LangSmith         | Tüm sistemi otomatik trace eder  |
-
-LangSmith Entegrasyonu
-----------------------
-LANGCHAIN_TRACING_V2=true ortam değişkeni set edildiğinde,
-tsn_graph.invoke() çağrısı içindeki TÜM node'lar (CrewAI, LCEL, stub)
-otomatik olarak LangSmith'e kaydedilir. Ek kod gerekmez.
-
-Graph Akışı
------------
-START
-  ↓
-[ingest_article]  → Ham metni doğrula, state hazırla
-  ↓
-[scoring_node]    → CrewAI scoring_crew() | SaveQualityScoreTool → DB'ye yazar
-  ↓
-[route_by_score]  → CONDITIONAL EDGE (threshold: SCORE_THRESHOLD env var)
-  ↙                              ↘
-(score < threshold)         (score >= threshold)
-[discard_node]              [categorize_and_summarize_node]
-  ↓                               ↓
-  └──── her ikisi de ─────→ [voice_synthesis_node]  (stub)
-                                   ↓
-                            [video_generation_node] (stub)
-                                   ↓
-                            [personalization_node]  LangChain LCEL
-                                   ↓
-                            [save_results_node]     DB final update
-                                   ↓
-                                  END
-
-NOT: discard_node → personalization_node bağlantısı şemaya sadıktır.
-     Reddedilen haberler negatif sinyal olarak personalizasyona beslenir.
+Graph akisi:
+START -> ingest_article -> scoring_node -> route_by_score
+approved -> categorize_and_summarize_node -> voice_synthesis_node ->
+video_generation_node -> personalization_node -> save_results_node -> END
+discard/error -> discard_node -> personalization_node -> save_results_node -> END
 """
 
 from __future__ import annotations
@@ -227,8 +193,10 @@ def ingest_article(state: ArticleState) -> ArticleState:
 
 def scoring_node(state: ArticleState) -> ArticleState:
     """
-    CrewAI Scoring Agent'ı çalıştırır.
-    Şemadaki "Scoring / Evaluation Agent" kutusuna karşılık gelir.
+    CrewAI Scoring Agent'ı çalıştırır. (Veya LangChain doğrudan LLM çağrısı)
+    SUNUMDAKİ YERİ: Terminalde sarı renkte dönen 
+    "[LangChain Node] Sending content to Local Ollama for AI Analysis..." adımıdır.
+    Burada haberin 1-100 arası kalite skoru atanır.
     """
     article_id = state["article_id"]
     threshold = state.get("score_threshold", SCORE_THRESHOLD)
@@ -281,11 +249,11 @@ def route_by_score(
     state: ArticleState,
 ) -> Literal["categorize_and_summarize_node", "discard_node"]:
     """
-    Puanlama sonucuna göre pipeline'ı yönlendirir.
-    Bu fonksiyon LangGraph'ın koşullu kenarı (conditional edge) olarak kullanılır.
-
-    - "approved"  → Kategorizasyon + Özetleme → Media → Personalizasyon
-    - Diğer (discarded/error) → Discard → Personalizasyon (negatif sinyal)
+    Puanlama sonucuna göre pipeline'ı yönlendirir (Conditional Edge).
+    SUNUMDAKİ YERİ: Terminaldeki "SCORE < 50 (THRESHOLD). Content REJECTED."
+    veya "SCORE >= 50. Content APPROVED." ayrımının teknik olarak yapıldığı yerdir.
+    
+    Bu fonksiyon bir yapay zeka ajanı DEĞİL, LangGraph'ın yol ayrımı (switch-case) mantığıdır.
     """
     if state.get("status") == "approved":
         return "categorize_and_summarize_node"
@@ -301,11 +269,11 @@ def route_by_score(
 def categorize_and_summarize_node(state: ArticleState) -> ArticleState:
     """
     Kategorizasyon ve özetleme işlemlerini sırayla yürütür.
-    Şemadaki "Categorization Agent" + "Summarization Agent" kutularına karşılık gelir.
-
-    categorize_summary_crew(quality_score=...) — crew içinde db_write araçları çalışır:
-        • UpdateScoreAndCategoriesTool → DB'ye kategorileri yazar
-        • UpdateSummaryTool → DB'ye özeti yazar
+    SUNUMDAKİ YERİ: Terminalde mor renkte görünen "[CrewAI Orchestrator] Delegating tasks..." adımı.
+    
+    Bu aşamada 2 farklı ajan (Categorization ve Summarization) sıralı (sequential) olarak çalıştırılır.
+    - @Categorization_Agent haber metnine bakar ve uygun kategoriyi seçer.
+    - @Summarization_Agent haberi maddeler halinde özetler (TL;DR).
     """
     article_id = state["article_id"]
     score = state.get("quality_score") or 0
@@ -530,6 +498,5 @@ def build_graph() -> StateGraph:
 # ---------------------------------------------------------------------------
 # Modül seviyesinde derlenen graph — import edildiğinde kullanıma hazır
 # ---------------------------------------------------------------------------
-from langgraphics import watch
-tsn_graph = watch(build_graph())
+tsn_graph = build_graph()
 logger.info("tsn_graph derlendi ve hazır.")
